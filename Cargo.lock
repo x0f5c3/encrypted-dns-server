@@ -1077,9 +1077,9 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sieve-cache"
-version = "1.1.6"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "879e304c6ec8e95de2bc5425b546df072ee5812d0b2b8497b73f0b68b31ddbbb"
+checksum = "8ac5b468ca7724d5de42dc114b2884993683a5820f095ef9578147a676bb036d"
 
 [[package]]
 name = "simd-adler32"
