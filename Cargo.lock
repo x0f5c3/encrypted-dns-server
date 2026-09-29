@@ -173,9 +173,9 @@ checksum = "49fb0c6640b4507ebd99ff67677009e381ba5eee1d14df78de4a3d16eb123c39"
 
 [[package]]
 name = "daemonize-simple"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4094aa1ec57f4c8f0b1d8417bf7a71f6efb2470bcfdfc70639f2147f525bf86c"
+checksum = "40ce0f709010a9883fb35bcf9b147f3ca37d0cff8b85f6c650b95af4ba141ac3"
 dependencies = [
  "libc",
 ]
