@@ -219,9 +219,9 @@ dependencies = [
 
 [[package]]
 name = "dnsstamps"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa047b0ecdc7201c8009c4558f6182efdb07cbe011e5b1dc964d358e25ab7594"
+checksum = "f0ab31126204c276141f9ab2be7074a425876c3b94e041c36c933701c02c5d7f"
 dependencies = [
  "byteorder",
  "ct-codecs",
