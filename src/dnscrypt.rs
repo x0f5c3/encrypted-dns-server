@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use libsodium_sys::*;
+use log::debug;
 use rand::prelude::*;
 
 use crate::crypto::*;
@@ -9,9 +9,9 @@ use crate::dnscrypt_certs::*;
 use crate::errors::*;
 use crate::pq;
 
-pub const DNSCRYPT_FULL_NONCE_SIZE: usize =
-    crypto_box_curve25519xchacha20poly1305_NONCEBYTES as usize;
-pub const DNSCRYPT_MAC_SIZE: usize = crypto_box_curve25519xchacha20poly1305_MACBYTES as usize;
+// Protocol constants; no dependency on a crypto backend's constants.
+pub const DNSCRYPT_FULL_NONCE_SIZE: usize = 24;
+pub const DNSCRYPT_MAC_SIZE: usize = 16;
 
 pub const DNSCRYPT_QUERY_MAGIC_SIZE: usize = 8;
 pub const DNSCRYPT_QUERY_PK_SIZE: usize = 32;
@@ -33,10 +33,7 @@ pub const DNSCRYPT_RESPONSE_MIN_PADDING_SIZE: usize = 1;
 pub const DNSCRYPT_RESPONSE_MIN_OVERHEAD: usize =
     DNSCRYPT_RESPONSE_HEADER_SIZE + DNSCRYPT_MAC_SIZE + DNSCRYPT_RESPONSE_MIN_PADDING_SIZE;
 
-/// Minimum overhead of a PQ response: the classical overhead plus the
-/// `<control-len>` field. The control block itself is not part of the
-/// minimum, since ticket issuance is skipped when the size budget is too
-/// tight for it.
+/// Minimum PQ overhead excludes optional ticket issuance.
 pub const DNSCRYPT_PQ_CONTROL_LEN_SIZE: usize = 2;
 pub const DNSCRYPT_PQ_RESPONSE_MIN_OVERHEAD: usize =
     DNSCRYPT_RESPONSE_MIN_OVERHEAD + DNSCRYPT_PQ_CONTROL_LEN_SIZE;
@@ -46,14 +43,15 @@ pub const DNSCRYPT_UDP_QUERY_MAX_SIZE: usize = DNS_MAX_PACKET_SIZE;
 pub const DNSCRYPT_TCP_QUERY_MIN_SIZE: usize = DNSCRYPT_QUERY_MIN_OVERHEAD + DNS_HEADER_SIZE;
 pub const DNSCRYPT_TCP_QUERY_MAX_SIZE: usize = DNSCRYPT_QUERY_MIN_OVERHEAD + DNS_MAX_PACKET_SIZE;
 
-pub const DNSCRYPT_UDP_RESPONSE_MIN_SIZE: usize = DNSCRYPT_RESPONSE_MIN_OVERHEAD + DNS_HEADER_SIZE;
+pub const DNSCRYPT_UDP_RESPONSE_MIN_SIZE: usize =
+    DNSCRYPT_RESPONSE_MIN_OVERHEAD + DNS_HEADER_SIZE;
 pub const DNSCRYPT_UDP_RESPONSE_MAX_SIZE: usize = DNS_MAX_PACKET_SIZE;
-pub const DNSCRYPT_TCP_RESPONSE_MIN_SIZE: usize = DNSCRYPT_RESPONSE_MIN_OVERHEAD + DNS_HEADER_SIZE;
+pub const DNSCRYPT_TCP_RESPONSE_MIN_SIZE: usize =
+    DNSCRYPT_RESPONSE_MIN_OVERHEAD + DNS_HEADER_SIZE;
 pub const DNSCRYPT_TCP_RESPONSE_MAX_SIZE: usize =
     DNSCRYPT_RESPONSE_MIN_OVERHEAD + DNS_MAX_PACKET_SIZE;
 
-/// Everything needed to encrypt the response to a query, carried from the
-/// decryption stage to the response stage.
+/// Parameters carried from query decryption to response encryption.
 pub enum EncryptionParams {
     Classical {
         shared_key: SharedKey,
@@ -67,12 +65,10 @@ pub enum EncryptionParams {
 }
 
 impl EncryptionParams {
-    /// Minimum wire overhead of a response encrypted under these parameters:
-    /// anything this much smaller than the size budget is guaranteed to fit.
     pub fn min_response_overhead(&self) -> usize {
         match self {
-            EncryptionParams::Classical { .. } => DNSCRYPT_RESPONSE_MIN_OVERHEAD,
-            EncryptionParams::Pq { .. } => DNSCRYPT_PQ_RESPONSE_MIN_OVERHEAD,
+            Self::Classical { .. } => DNSCRYPT_RESPONSE_MIN_OVERHEAD,
+            Self::Pq { .. } => DNSCRYPT_PQ_RESPONSE_MIN_OVERHEAD,
         }
     }
 }
@@ -86,7 +82,11 @@ pub fn decrypt(
     ensure!(wrapped_packet.len() >= DNSCRYPT_QUERY_MAGIC_SIZE, "Short packet");
 
     if pq_enabled && wrapped_packet[..pq::PQ_RESUME_MAGIC.len()] == pq::PQ_RESUME_MAGIC {
-        return decrypt_pq_resumed(wrapped_packet, dnscrypt_encryption_params_set, pq_ticket_key);
+        return decrypt_pq_resumed(
+            wrapped_packet,
+            dnscrypt_encryption_params_set,
+            pq_ticket_key,
+        );
     }
 
     let client_magic = &wrapped_packet[..DNSCRYPT_QUERY_MAGIC_SIZE];
@@ -110,8 +110,10 @@ pub fn decrypt(
     );
     let client_pk = &wrapped_packet
         [DNSCRYPT_QUERY_MAGIC_SIZE..DNSCRYPT_QUERY_MAGIC_SIZE + DNSCRYPT_QUERY_PK_SIZE];
-    let client_nonce = &wrapped_packet[DNSCRYPT_QUERY_MAGIC_SIZE + DNSCRYPT_QUERY_PK_SIZE
-        ..DNSCRYPT_QUERY_MAGIC_SIZE + DNSCRYPT_QUERY_PK_SIZE + DNSCRYPT_QUERY_NONCE_SIZE];
+    let client_nonce = &wrapped_packet[
+        DNSCRYPT_QUERY_MAGIC_SIZE + DNSCRYPT_QUERY_PK_SIZE
+            ..DNSCRYPT_QUERY_MAGIC_SIZE + DNSCRYPT_QUERY_PK_SIZE + DNSCRYPT_QUERY_NONCE_SIZE
+        ];
     let encrypted_packet = &wrapped_packet[DNSCRYPT_QUERY_HEADER_SIZE..];
 
     let dnscrypt_encryption_params = dnscrypt_encryption_params_set
@@ -155,8 +157,7 @@ pub fn decrypt(
     Ok((EncryptionParams::Classical { shared_key, nonce }, packet))
 }
 
-/// Decrypt a PQ query that carries an X-Wing ciphertext, and prepare a
-/// freshly issued resumption ticket for the response.
+/// Decapsulate a query and prepare a new resumption ticket.
 fn decrypt_pq_ciphertext(
     wrapped_packet: &[u8],
     params: &Arc<DNSCryptEncryptionParams>,
@@ -167,7 +168,8 @@ fn decrypt_pq_ciphertext(
     let ct_len = pq::XWING_CT_SIZE;
     let nonce_size = DNSCRYPT_QUERY_NONCE_SIZE;
     ensure!(
-        wrapped_packet.len() >= cm + ct_len + nonce_size + DNSCRYPT_MAC_SIZE + DNS_HEADER_SIZE,
+        wrapped_packet.len()
+            >= cm + ct_len + nonce_size + DNSCRYPT_MAC_SIZE + DNS_HEADER_SIZE,
         "Short PQ query"
     );
     let mut client_magic = [0u8; 8];
@@ -193,24 +195,22 @@ fn decrypt_pq_ciphertext(
     let peh = pq_params.profile_extension_hash();
     let serial = pq_params.serial();
     let ts_end = pq_params.ts_end();
-    let tp = pq::ticket_plain(&rs, &es_version, &client_magic, &serial, &ts_end, ticket_expiry, &peh);
+    let tp = pq::ticket_plain(
+        &rs, &es_version, &client_magic, &serial,
+        &ts_end, ticket_expiry, &peh,
+    );
     let ticket = pq::seal_ticket(pq_ticket_key, &ticket_nonce, &tp);
     let control = pq::control_block(pq::PQ_TICKET_LIFETIME, &ticket);
     debug!("PQ X-Wing query decapsulated; resumption ticket issued");
 
     rand::rng().fill_bytes(&mut nonce[nonce_size..]);
     Ok((
-        EncryptionParams::Pq {
-            shared_key,
-            nonce,
-            control,
-        },
+        EncryptionParams::Pq { shared_key, nonce, control },
         packet,
     ))
 }
 
-/// Decrypt a resumed PQ query, validating its ticket and deriving the
-/// per-query key without a KEM decapsulation.
+/// Validate a ticket and derive a resumed query key without decapsulation.
 fn decrypt_pq_resumed(
     wrapped_packet: &[u8],
     dnscrypt_encryption_params_set: &[Arc<DNSCryptEncryptionParams>],
@@ -223,11 +223,13 @@ fn decrypt_pq_resumed(
         u16::from_be_bytes([wrapped_packet[magic], wrapped_packet[magic + 1]]) as usize;
     let ticket_off = magic + 2;
     ensure!(
-        wrapped_packet.len() >= ticket_off + ticket_len + nonce_size + DNSCRYPT_MAC_SIZE + DNS_HEADER_SIZE,
+        wrapped_packet.len()
+            >= ticket_off + ticket_len + nonce_size + DNSCRYPT_MAC_SIZE + DNS_HEADER_SIZE,
         "Short resumed query"
     );
     let ticket = &wrapped_packet[ticket_off..ticket_off + ticket_len];
-    let client_nonce = &wrapped_packet[ticket_off + ticket_len..ticket_off + ticket_len + nonce_size];
+    let client_nonce =
+        &wrapped_packet[ticket_off + ticket_len..ticket_off + ticket_len + nonce_size];
     let encrypted_packet = &wrapped_packet[ticket_off + ticket_len + nonce_size..];
 
     let opened = pq::open_ticket(pq_ticket_key, ticket)?;
@@ -262,8 +264,6 @@ pub fn encrypt(
     params: &EncryptionParams,
     max_packet_size: usize,
 ) -> Result<Vec<u8>, Error> {
-    // Every response is framed the same way: the response magic followed by the
-    // full nonce. Only the encryption of the payload differs between schemes.
     let nonce = match params {
         EncryptionParams::Classical { nonce, .. } | EncryptionParams::Pq { nonce, .. } => nonce,
     };
@@ -285,19 +285,14 @@ pub fn encrypt(
                 max_encrypted_size,
             )?;
         }
-        EncryptionParams::Pq {
-            shared_key,
-            nonce,
-            control,
-        } => {
+        EncryptionParams::Pq { shared_key, nonce, control } => {
             ensure!(
                 max_packet_size >= wrapped_packet.len() + DNSCRYPT_MAC_SIZE,
                 "Max packet size too short"
             );
             let max_plaintext = max_packet_size - wrapped_packet.len() - DNSCRYPT_MAC_SIZE;
-            // A ticket is an optimization, not response data: when the control
-            // block would not leave room for the DNS payload and its padding,
-            // the ticket is withheld rather than the response truncated.
+
+            // Withhold the optional ticket before sacrificing DNS payload.
             let min_plaintext = DNSCRYPT_PQ_CONTROL_LEN_SIZE
                 + control.len()
                 + packet.len()
@@ -330,7 +325,7 @@ mod tests {
 
     #[test]
     fn classical_responses_fit_and_round_trip_at_padding_boundaries() {
-        crate::crypto::init().unwrap();
+        init().unwrap();
         let shared_key = SharedKey::from_bytes([0x42; 32]);
         for nonce_byte in 0..=255 {
             let nonce = [nonce_byte; DNSCRYPT_FULL_NONCE_SIZE];
@@ -352,23 +347,16 @@ mod tests {
                     );
                 }
                 assert!(
-                    encrypt(response, &params, len + DNSCRYPT_RESPONSE_MIN_OVERHEAD - 1).is_err()
+                    encrypt(response, &params, len + DNSCRYPT_RESPONSE_MIN_OVERHEAD - 1)
+                        .is_err()
                 );
             }
         }
     }
 
-    // Any response the `maybe_truncate_response` gate lets through must
-    // encrypt into the query-size budget, shrinking the padding and
-    // withholding the ticket as needed; anything larger must fail, keeping
-    // the gate the single point of truth. Responses of 318..=375 bytes to a
-    // 424-byte resumed query used to fail here instead and were silently
-    // dropped, leaving the client to time out (dnscrypt-server-docker#49).
     #[test]
     fn pq_responses_fit_the_query_size_budget() {
-        unsafe {
-            assert!(sodium_init() >= 0);
-        }
+        init().unwrap();
         let shared_key = SharedKey::from_bytes([0x42; 32]);
         let nonce = [0x07u8; DNSCRYPT_FULL_NONCE_SIZE];
         let ticket_control = pq::control_block(600, &[0x24u8; 130]);
@@ -392,15 +380,9 @@ mod tests {
         }
     }
 
-    // A 319-byte response to a 424-byte resumed query is the exact shape of
-    // the www.amazon.it AAAA lookup from the issue report: the ticket must
-    // be withheld and the response delivered whole. With a roomy budget the
-    // control block rides along untouched.
     #[test]
     fn pq_ticket_is_withheld_before_the_response_is_truncated() {
-        unsafe {
-            assert!(sodium_init() >= 0);
-        }
+        init().unwrap();
         let shared_key = SharedKey::from_bytes([0x42; 32]);
         let nonce = [0x07u8; DNSCRYPT_FULL_NONCE_SIZE];
         let control = pq::control_block(600, &[0x24u8; 130]);

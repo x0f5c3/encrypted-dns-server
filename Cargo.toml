@@ -30,7 +30,7 @@ clap = { version = "4.6.7", default-features = false, features = [
 coarsetime = "0.1.37"
 daemonize-simple = "0.1.6"
 dnsstamps = "0.1.10"
-educe = { version = "0.7.6", features = ["full"] }
+educe = { version = "0.8.1", features = ["full"] }
 env_logger = { version = "0.11.11", default-features = false, features = [
   "humantime",
 ] }
@@ -65,6 +65,19 @@ tokio = { version = "1.53.1", features = [
   "rt-multi-thread",
 ] }
 toml = "1.1.6"
+hickory-server = { version = "0.26.3", features = ["dnssec-ring", "https-ring", "rustls-platform-verifier", "resolver", "sqlite", "toml", "webpki-roots", "tls-ring", "quic-ring", "h3-ring"]}
+dryoc = { git = "https://github.com/brndnmtthws/dryoc", rev = "18c89b11e3432322337e3e6073106aea3bd0c4af", default-features = false, features = ["std"] }
+chacha20 = { version = "=0.9.1", features = ["zeroize"] }
+poly1305 = { version = "=0.8.0", features = ["zeroize"] }
+sha2 = "0.11.0"
+hkdf = "0.13.0"
+hex = "0.4"
+zeroize = { version = "1.9", features = ["derive"] }
+subtle = "2.6"
+
+# Optional normal dependency: Cargo does not support optional dev-dependencies.
+libsodium-sys = { package = "libsodium-sys-stable", version = "=1.24.0", optional = true }
+
 
 [target.'cfg(target_family = "unix")'.dependencies]
 privdrop = "0.5.6"
@@ -72,13 +85,14 @@ privdrop = "0.5.6"
 [dependencies.prometheus]
 optional = true
 package = "prometheus"
-version = "0.13.4"
+version = "0.14.0"
 default-features = false
 features = ["process"]
 
 [features]
 default = ["metrics"]
 metrics = ["hyper", "prometheus"]
+sodium-compat-tests = ["dep:libsodium-sys"]
 
 [package.metadata.deb]
 extended-description = """\
@@ -109,3 +123,12 @@ priority = "optional"
 codegen-units = 1
 incremental = false
 panic = "abort"
+
+[dev-dependencies]
+criterion = "0.8.2"
+anyhow = "1"
+
+[[bench]]
+name = "crypto_backends"
+harness = false
+required-features = ["sodium-compat-tests"]

@@ -14,14 +14,14 @@ jobs:
             target: x86_64-pc-windows-msvc
 
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - name: Check Cargo availability
         run: cargo --version
       - name: Check Rustup default toolchain
-        run: rustup default | grep nightly
+        run: rustup default | grep stable
       - name: Test
         run: |
-          cargo test --target ${{ matrix.target }}
+          cargo test --target ${{ matrix.target }} --release --features sodium-compat-tests

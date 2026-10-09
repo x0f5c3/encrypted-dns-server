@@ -29,7 +29,7 @@ jobs:
       ARCHIVE_PATH: encrypted-dns_${{ github.ref_name }}_${{ matrix.target_alias }}${{ matrix.archive_suffix }}
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: mlugg/setup-zig@v2
 
@@ -68,12 +68,12 @@ jobs:
           cargo install cargo-deb
           cargo deb --output=encrypted-dns_${{ github.ref_name }}_amd64.deb --no-build
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: encrypted-dns_${{ matrix.target_alias }}
           path: ${{ env.ARCHIVE_PATH }}
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: ${{ matrix.os == 'ubuntu-22.04' }}
         with:
           name: encrypted-dns_deb-amd64
@@ -86,10 +86,10 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v8
 
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

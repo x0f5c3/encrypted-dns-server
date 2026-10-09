@@ -6,3 +6,6 @@ encrypted-dns.toml
 a.rb
 sizes.txt
 .swival
+./*.sh
+./benchmark-report.txt
+.idea
